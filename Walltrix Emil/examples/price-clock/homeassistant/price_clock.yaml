@@ -1,0 +1,129 @@
+# Price Clock: electricity price ring
+#
+# Home Assistant package. Copy this file to /config/packages/ and make sure
+# configuration.yaml loads packages (see docs/getting-started/04-home-assistant.md).
+#
+# Creates sensor.price_clock_ring_colors: 216 hex characters, one RRGGBB
+# colour per LED, which the clock reads and shows on its 36 LEDs.
+#
+# Everything you are expected to change is in the "variables" section below.
+# docs/guides/02-time-on-the-ring.md explains the time settings.
+
+template:
+  - triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "/1"
+    variables:
+      # Price sensor with "today" and "tomorrow" attributes. Each item needs
+      # time_start, time_end and SEK_per_kWh.
+      price_entity: sensor.swedish_spot_price_elpris_se3_forecast
+
+      # What the full ring means:
+      #   minutes = 60 minutes, like the minute hand
+      #   hours   = 12 hours, like the hour hand
+      layout: minutes
+
+      # Length of one interval in minutes. Allowed values:
+      #   minutes face: 15 (9 LEDs) or 30 (18 LEDs)
+      #   hours face:   60 (3 LEDs), 120 (6 LEDs), 180 (9 LEDs), 360 (18 LEDs)
+      # An interval longer than the price slots shows their average.
+      interval_minutes: 15
+
+      # Which LED sits at 12 o'clock, and whether LED numbers increase
+      # clockwise. Find them with the LED Index Test effect.
+      led_offset: 0
+      clockwise: true
+
+      # Brightness of every LED outside the current interval.
+      # 1.0 = no dimming, 0.55 = 55 percent.
+      dim_others: 0.55
+
+      # Colour for an interval with no price yet (for example tomorrow's
+      # prices before they are published).
+      no_data_color: "#000000"
+
+      # Price in öre/kWh mapped to a colour. Prices between two steps are
+      # blended. Below the first step uses the first colour, above the last
+      # step uses the last colour. Values must go from low to high.
+      price_colors:
+        - [0, "#00BFFF"]
+        - [12.5, "#0070FF"]
+        - [25, "#0040FF"]
+        - [37.5, "#4000FF"]
+        - [50, "#8000FF"]
+        - [62.5, "#B000FF"]
+        - [75, "#FF00FF"]
+        - [87.5, "#FF0080"]
+        - [100, "#FF0040"]
+    sensor:
+      - name: "Price Clock Ring Colors"
+        unique_id: price_clock_ring_colors
+        icon: mdi:clock-time-four-outline
+        availability: >
+          {{ state_attr(price_entity, 'today') is not none }}
+        state: >
+          {%- macro scaled(hex, k) -%}
+            {%- set h = hex | string | replace('#', '') -%}
+            {{- '%02X%02X%02X' | format(
+                  ((h[0:2] | int(0, 16)) * k) | int,
+                  ((h[2:4] | int(0, 16)) * k) | int,
+                  ((h[4:6] | int(0, 16)) * k) | int) -}}
+          {%- endmacro -%}
+          {%- macro gradient(stops, v) -%}
+            {%- set g = namespace(hex=stops[0][1] | string | replace('#', '')) -%}
+            {%- if v >= stops[-1][0] -%}
+              {%- set g.hex = stops[-1][1] | string | replace('#', '') -%}
+            {%- elif v > stops[0][0] -%}
+              {%- for k in range(stops | count - 1) -%}
+                {%- if stops[k][0] <= v < stops[k + 1][0] -%}
+                  {%- set f = (v - stops[k][0]) / (stops[k + 1][0] - stops[k][0]) -%}
+                  {%- set a = stops[k][1] | string | replace('#', '') -%}
+                  {%- set b = stops[k + 1][1] | string | replace('#', '') -%}
+                  {%- set g.hex = '%02X%02X%02X' | format(
+                        ((a[0:2] | int(0, 16)) + ((b[0:2] | int(0, 16)) - (a[0:2] | int(0, 16))) * f) | int,
+                        ((a[2:4] | int(0, 16)) + ((b[2:4] | int(0, 16)) - (a[2:4] | int(0, 16))) * f) | int,
+                        ((a[4:6] | int(0, 16)) + ((b[4:6] | int(0, 16)) - (a[4:6] | int(0, 16))) * f) | int) -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endif -%}
+            {{- g.hex -}}
+          {%- endmacro -%}
+          {#- Price slots for today and tomorrow -#}
+          {%- set slots = (state_attr(price_entity, 'today') or [])
+                        + (state_attr(price_entity, 'tomorrow') or []) -%}
+          {%- set starts = slots | map(attribute='time_start') | map('as_timestamp', 0) | list -%}
+          {%- set ends = slots | map(attribute='time_end') | map('as_timestamp', 0) | list -%}
+          {#- The face: 60 minutes from the start of this hour, or 12 hours
+              from the last midnight or noon -#}
+          {%- set n = now() -%}
+          {%- set now_ts = as_timestamp(n) -%}
+          {%- set ring_s = 3600 if layout == 'minutes' else 43200 -%}
+          {%- set ring_start = as_timestamp(n.replace(minute=0, second=0, microsecond=0)) if layout == 'minutes'
+                else as_timestamp(n.replace(hour=(n.hour // 12) * 12, minute=0, second=0, microsecond=0)) -%}
+          {%- set iv = (interval_minutes | int(15)) * 60 -%}
+          {%- set o = namespace(s='') -%}
+          {%- for i in range(36) -%}
+            {#- Place of this LED on the face, 0 at 12 o'clock -#}
+            {%- set pos = ((i - led_offset) if clockwise else (led_offset - i)) % 36 -%}
+            {#- The interval at this place that has not ended yet -#}
+            {%- set t = ring_start + ((pos * ring_s // 36) // iv) * iv -%}
+            {%- if t + iv <= now_ts -%}{%- set t = t + ring_s -%}{%- endif -%}
+            {%- set is_now = t <= now_ts -%}
+            {#- Average of the prices inside the interval -#}
+            {%- set avg = namespace(sum=0, count=0) -%}
+            {%- for k in range(starts | count) -%}
+              {%- if starts[k] < t + iv and ends[k] > t -%}
+                {%- set avg.sum = avg.sum + (slots[k].SEK_per_kWh | float(0)) -%}
+                {%- set avg.count = avg.count + 1 -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {%- if avg.count == 0 -%}
+              {%- set col = no_data_color -%}
+            {%- else -%}
+              {%- set col = gradient(price_colors, avg.sum / avg.count * 100) -%}
+            {%- endif -%}
+            {%- set o.s = o.s ~ scaled(col, 1.0 if is_now else dim_others | float(1)) -%}
+          {%- endfor -%}
+          {{ o.s }}

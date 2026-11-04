@@ -1,0 +1,318 @@
+# Weather Clock: weather and daylight rings
+#
+# Home Assistant package. Copy this file to /config/packages/ and make sure
+# configuration.yaml loads packages (see docs/getting-started/04-home-assistant.md).
+#
+# Uses only what a default Home Assistant install provides:
+#   weather.forecast_home  Met.no, set up during onboarding
+#
+# Creates three sensors, each 216 hex characters (36 LEDs x RRGGBB).
+# The clock's "Ring Mode" select picks which one is shown:
+#   sensor.weather_clock_condition_ring_colors    Condition (sunny, rainy, ...)
+#   sensor.weather_clock_temperature_ring_colors  Temperature
+#   sensor.weather_clock_rain_ring_colors         Rain and snow
+#
+# Everything you are expected to change is in the "variables" section below.
+# docs/guides/02-time-on-the-ring.md explains the time settings.
+
+template:
+  - triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "/1"
+    variables:
+      # Weather entity to read the hourly forecast from.
+      weather_entity: weather.forecast_home
+
+      # What the full ring means:
+      #   hours   = 12 hours, like the hour hand
+      #   minutes = 60 minutes, like the minute hand
+      layout: hours
+
+      # Length of one interval in minutes. Allowed values:
+      #   hours face:   60 (3 LEDs), 120 (6 LEDs), 180 (9 LEDs), 360 (18 LEDs)
+      #   minutes face: 15 (9 LEDs) or 30 (18 LEDs)
+      # The forecast is hourly. An interval longer than an hour shows the
+      # forecast hour it starts in.
+      interval_minutes: 60
+
+      # Which LED sits at 12 o'clock, and whether LED numbers increase
+      # clockwise. Find them with the LED Index Test effect.
+      led_offset: 0
+      clockwise: true
+
+      # Brightness of every LED outside the current interval.
+      # 1.0 = no dimming, 0.4 = 40 percent.
+      dim_others: 0.4
+
+      # Colour for intervals beyond the end of the forecast.
+      no_data_color: "#000000"
+
+      # Condition ring: one colour per Home Assistant weather condition.
+      # Conditions not listed use unknown_condition_color.
+      condition_colors:
+        sunny: "#FFD700"
+        clear-night: "#333333"
+        partlycloudy: "#edecc7"
+        cloudy: "#83888c"
+        fog: "#d5d5d8"
+        rainy: "#1E90FF"
+        pouring: "#4589fd"
+        snowy: "#f8fcff"
+        snowy-rainy: "#f5faff"
+        hail: "#cfe2f3"
+        lightning: "#ff1414"
+        lightning-rainy: "#fa8279"
+        windy: "#7d4bf5"
+        windy-variant: "#7d4bf5"
+        exceptional: "#50ff00"
+      unknown_condition_color: "#646464"
+
+      # Temperature ring: degrees C mapped to a colour. Temperatures between
+      # two steps are blended. Values must go from low to high.
+      temperature_colors:
+        - [-15, "#E4F0FF"]
+        - [-12.5, "#DAE9FF"]
+        - [-10, "#CEE4FF"]
+        - [-7.5, "#C1DBFF"]
+        - [-5, "#B2D2FF"]
+        - [-2.5, "#A9CDFF"]
+        - [0, "#9DC4FF"]
+        - [2.5, "#8BB6FF"]
+        - [5, "#77A9FF"]
+        - [7.5, "#5F9AFF"]
+        - [10, "#4EB0FF"]
+        - [12.5, "#3CD2E6"]
+        - [15, "#3CFFA0"]
+        - [17.5, "#40FF40"]
+        - [20, "#A8FF3C"]
+        - [22.5, "#FFD060"]
+        - [25, "#FF7A50"]
+        - [27.5, "#FF3A6A"]
+        - [30, "#FF085C"]
+
+      # Rain ring: precipitation in mm per hour. Each LED takes the colour of
+      # the highest step it reaches (no blending). Values go from low to high.
+      # Hours with less than the first step use dry_color.
+      dry_color: "#0A0A0A"
+      # Rain: blue, lighter for drizzle, deeper for heavy rain.
+      rain_colors:
+        - [0.1, "#B2D2FF"]
+        - [0.5, "#7BAEFF"]
+        - [1, "#4E8CFF"]
+        - [2.5, "#1F5CFF"]
+        - [5, "#0030FF"]
+        - [10, "#0000E0"]
+      # Snow: white, brighter the more it snows. Used when the forecast says
+      # snowy, or when it is 0 C or colder.
+      snow_colors:
+        - [0.1, "#707070"]
+        - [0.5, "#A0A0A0"]
+        - [1, "#D0D0D0"]
+        - [2.5, "#FFFFFF"]
+      # Sleet and hail: between blue and white. Used when the forecast says
+      # snowy-rainy or hail.
+      sleet_colors:
+        - [0.1, "#7088A8"]
+        - [0.5, "#98B4D8"]
+        - [1, "#C0D8FF"]
+        - [2.5, "#E0ECFF"]
+    actions:
+      - action: weather.get_forecasts
+        continue_on_error: true
+        target:
+          entity_id: "{{ weather_entity }}"
+        data:
+          type: hourly
+        response_variable: hourly
+    sensor:
+      - name: "Weather Clock Condition Ring Colors"
+        unique_id: weather_clock_condition_ring_colors
+        icon: mdi:weather-partly-cloudy
+        availability: &forecast_available >
+          {{ hourly is defined and hourly is mapping
+             and weather_entity in hourly
+             and hourly[weather_entity].forecast | count > 0 }}
+        state: >
+          {%- macro scaled(hex, k) -%}
+            {%- set h = hex | string | replace('#', '') -%}
+            {{- '%02X%02X%02X' | format(
+                  ((h[0:2] | int(0, 16)) * k) | int,
+                  ((h[2:4] | int(0, 16)) * k) | int,
+                  ((h[4:6] | int(0, 16)) * k) | int) -}}
+          {%- endmacro -%}
+          {%- set fc = hourly[weather_entity].forecast
+                if hourly is defined and hourly is mapping and weather_entity in hourly
+                else [] -%}
+          {%- if fc | count > 0 -%}
+          {%- set starts = fc | map(attribute='datetime') | map('as_timestamp', 0) | list -%}
+          {#- The face: 12 hours from the last midnight or noon, or 60
+              minutes from the start of this hour -#}
+          {%- set n = now() -%}
+          {%- set now_ts = as_timestamp(n) -%}
+          {%- set ring_s = 3600 if layout == 'minutes' else 43200 -%}
+          {%- set ring_start = as_timestamp(n.replace(minute=0, second=0, microsecond=0)) if layout == 'minutes'
+                else as_timestamp(n.replace(hour=(n.hour // 12) * 12, minute=0, second=0, microsecond=0)) -%}
+          {%- set iv = (interval_minutes | int(60)) * 60 -%}
+          {%- set o = namespace(s='') -%}
+          {%- for i in range(36) -%}
+            {#- Place of this LED on the face, 0 at 12 o'clock -#}
+            {%- set pos = ((i - led_offset) if clockwise else (led_offset - i)) % 36 -%}
+            {#- The interval at this place that has not ended yet -#}
+            {%- set t = ring_start + ((pos * ring_s // 36) // iv) * iv -%}
+            {%- if t + iv <= now_ts -%}{%- set t = t + ring_s -%}{%- endif -%}
+            {%- set is_now = t <= now_ts -%}
+            {#- The current interval looks up now, the others their start -#}
+            {%- set t = now_ts if is_now else t -%}
+            {%- set hit = namespace(idx=-1) -%}
+            {%- for k in range(starts | count) -%}
+              {%- if starts[k] <= t -%}{%- set hit.idx = k -%}{%- endif -%}
+            {%- endfor -%}
+            {%- if hit.idx < 0 and starts[0] - t < 3600 -%}{%- set hit.idx = 0 -%}{%- endif -%}
+            {%- if hit.idx >= 0 and t >= starts[-1] + 3600 -%}{%- set hit.idx = -1 -%}{%- endif -%}
+            {%- if hit.idx < 0 -%}
+              {%- set col = no_data_color -%}
+            {%- else -%}
+              {%- set col = condition_colors.get(fc[hit.idx].condition, unknown_condition_color) -%}
+            {%- endif -%}
+            {%- set o.s = o.s ~ scaled(col, 1.0 if is_now else dim_others | float(1)) -%}
+          {%- endfor -%}
+          {{ o.s }}
+          {%- endif -%}
+
+      - name: "Weather Clock Temperature Ring Colors"
+        unique_id: weather_clock_temperature_ring_colors
+        icon: mdi:thermometer
+        availability: *forecast_available
+        state: >
+          {%- macro scaled(hex, k) -%}
+            {%- set h = hex | string | replace('#', '') -%}
+            {{- '%02X%02X%02X' | format(
+                  ((h[0:2] | int(0, 16)) * k) | int,
+                  ((h[2:4] | int(0, 16)) * k) | int,
+                  ((h[4:6] | int(0, 16)) * k) | int) -}}
+          {%- endmacro -%}
+          {%- macro gradient(stops, v) -%}
+            {%- set g = namespace(hex=stops[0][1] | string | replace('#', '')) -%}
+            {%- if v >= stops[-1][0] -%}
+              {%- set g.hex = stops[-1][1] | string | replace('#', '') -%}
+            {%- elif v > stops[0][0] -%}
+              {%- for k in range(stops | count - 1) -%}
+                {%- if stops[k][0] <= v < stops[k + 1][0] -%}
+                  {%- set f = (v - stops[k][0]) / (stops[k + 1][0] - stops[k][0]) -%}
+                  {%- set a = stops[k][1] | string | replace('#', '') -%}
+                  {%- set b = stops[k + 1][1] | string | replace('#', '') -%}
+                  {%- set g.hex = '%02X%02X%02X' | format(
+                        ((a[0:2] | int(0, 16)) + ((b[0:2] | int(0, 16)) - (a[0:2] | int(0, 16))) * f) | int,
+                        ((a[2:4] | int(0, 16)) + ((b[2:4] | int(0, 16)) - (a[2:4] | int(0, 16))) * f) | int,
+                        ((a[4:6] | int(0, 16)) + ((b[4:6] | int(0, 16)) - (a[4:6] | int(0, 16))) * f) | int) -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endif -%}
+            {{- g.hex -}}
+          {%- endmacro -%}
+          {%- set fc = hourly[weather_entity].forecast
+                if hourly is defined and hourly is mapping and weather_entity in hourly
+                else [] -%}
+          {%- if fc | count > 0 -%}
+          {%- set starts = fc | map(attribute='datetime') | map('as_timestamp', 0) | list -%}
+          {#- The face: 12 hours from the last midnight or noon, or 60
+              minutes from the start of this hour -#}
+          {%- set n = now() -%}
+          {%- set now_ts = as_timestamp(n) -%}
+          {%- set ring_s = 3600 if layout == 'minutes' else 43200 -%}
+          {%- set ring_start = as_timestamp(n.replace(minute=0, second=0, microsecond=0)) if layout == 'minutes'
+                else as_timestamp(n.replace(hour=(n.hour // 12) * 12, minute=0, second=0, microsecond=0)) -%}
+          {%- set iv = (interval_minutes | int(60)) * 60 -%}
+          {%- set o = namespace(s='') -%}
+          {%- for i in range(36) -%}
+            {#- Place of this LED on the face, 0 at 12 o'clock -#}
+            {%- set pos = ((i - led_offset) if clockwise else (led_offset - i)) % 36 -%}
+            {#- The interval at this place that has not ended yet -#}
+            {%- set t = ring_start + ((pos * ring_s // 36) // iv) * iv -%}
+            {%- if t + iv <= now_ts -%}{%- set t = t + ring_s -%}{%- endif -%}
+            {%- set is_now = t <= now_ts -%}
+            {#- The current interval looks up now, the others their start -#}
+            {%- set t = now_ts if is_now else t -%}
+            {%- set hit = namespace(idx=-1) -%}
+            {%- for k in range(starts | count) -%}
+              {%- if starts[k] <= t -%}{%- set hit.idx = k -%}{%- endif -%}
+            {%- endfor -%}
+            {%- if hit.idx < 0 and starts[0] - t < 3600 -%}{%- set hit.idx = 0 -%}{%- endif -%}
+            {%- if hit.idx >= 0 and t >= starts[-1] + 3600 -%}{%- set hit.idx = -1 -%}{%- endif -%}
+            {%- if hit.idx < 0 -%}
+              {%- set col = no_data_color -%}
+            {%- else -%}
+              {%- set col = gradient(temperature_colors, fc[hit.idx].temperature | float(0)) -%}
+            {%- endif -%}
+            {%- set o.s = o.s ~ scaled(col, 1.0 if is_now else dim_others | float(1)) -%}
+          {%- endfor -%}
+          {{ o.s }}
+          {%- endif -%}
+
+      - name: "Weather Clock Rain Ring Colors"
+        unique_id: weather_clock_rain_ring_colors
+        icon: mdi:weather-pouring
+        availability: *forecast_available
+        state: >
+          {%- macro scaled(hex, k) -%}
+            {%- set h = hex | string | replace('#', '') -%}
+            {{- '%02X%02X%02X' | format(
+                  ((h[0:2] | int(0, 16)) * k) | int,
+                  ((h[2:4] | int(0, 16)) * k) | int,
+                  ((h[4:6] | int(0, 16)) * k) | int) -}}
+          {%- endmacro -%}
+          {%- set fc = hourly[weather_entity].forecast
+                if hourly is defined and hourly is mapping and weather_entity in hourly
+                else [] -%}
+          {%- if fc | count > 0 -%}
+          {%- set starts = fc | map(attribute='datetime') | map('as_timestamp', 0) | list -%}
+          {#- The face: 12 hours from the last midnight or noon, or 60
+              minutes from the start of this hour -#}
+          {%- set n = now() -%}
+          {%- set now_ts = as_timestamp(n) -%}
+          {%- set ring_s = 3600 if layout == 'minutes' else 43200 -%}
+          {%- set ring_start = as_timestamp(n.replace(minute=0, second=0, microsecond=0)) if layout == 'minutes'
+                else as_timestamp(n.replace(hour=(n.hour // 12) * 12, minute=0, second=0, microsecond=0)) -%}
+          {%- set iv = (interval_minutes | int(60)) * 60 -%}
+          {%- set o = namespace(s='') -%}
+          {%- for i in range(36) -%}
+            {#- Place of this LED on the face, 0 at 12 o'clock -#}
+            {%- set pos = ((i - led_offset) if clockwise else (led_offset - i)) % 36 -%}
+            {#- The interval at this place that has not ended yet -#}
+            {%- set t = ring_start + ((pos * ring_s // 36) // iv) * iv -%}
+            {%- if t + iv <= now_ts -%}{%- set t = t + ring_s -%}{%- endif -%}
+            {%- set is_now = t <= now_ts -%}
+            {#- The current interval looks up now, the others their start -#}
+            {%- set t = now_ts if is_now else t -%}
+            {%- set hit = namespace(idx=-1) -%}
+            {%- for k in range(starts | count) -%}
+              {%- if starts[k] <= t -%}{%- set hit.idx = k -%}{%- endif -%}
+            {%- endfor -%}
+            {%- if hit.idx < 0 and starts[0] - t < 3600 -%}{%- set hit.idx = 0 -%}{%- endif -%}
+            {%- if hit.idx >= 0 and t >= starts[-1] + 3600 -%}{%- set hit.idx = -1 -%}{%- endif -%}
+            {%- if hit.idx < 0 -%}
+              {%- set col = no_data_color -%}
+            {%- else -%}
+              {%- set mm = fc[hit.idx].precipitation | float(0) -%}
+              {%- set temp = fc[hit.idx].temperature | float(5) -%}
+              {%- set cond = fc[hit.idx].condition | default('') -%}
+              {#- Sleet or hail, snow, or rain -#}
+              {%- if cond in ['snowy-rainy', 'hail'] -%}
+                {%- set steps = sleet_colors -%}
+              {%- elif cond == 'snowy' or temp <= 0 -%}
+                {%- set steps = snow_colors -%}
+              {%- else -%}
+                {%- set steps = rain_colors -%}
+              {%- endif -%}
+              {%- set step = namespace(hex=dry_color) -%}
+              {%- for r in steps -%}
+                {%- if mm >= r[0] -%}{%- set step.hex = r[1] -%}{%- endif -%}
+              {%- endfor -%}
+              {%- set col = step.hex -%}
+            {%- endif -%}
+            {%- set o.s = o.s ~ scaled(col, 1.0 if is_now else dim_others | float(1)) -%}
+          {%- endfor -%}
+          {{ o.s }}
+          {%- endif -%}
