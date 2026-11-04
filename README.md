@@ -272,7 +272,7 @@ Substitutions at the top of `deltaco-sh-ws03.yaml`:
 | Key | Default | Purpose |
 |---|---|---|
 | `name` | `smoke-alarm-hallway` | ESPHome node name |
-| `friendly_name` | `Smoke Alarm Hallway` | Name in Home Assistant |
+| `friendly_name` | `Smoke Alarm` | Name in Home Assistant |
 | `static_ip` | `10.0.0.60` | Fixed address, shortens each wake |
 | `gateway`, `subnet` | `10.0.0.1`, `255.255.255.0` | Network |
 | `dns1`, `dns2` | `10.0.0.5`, `10.0.0.6` | DNS servers |
