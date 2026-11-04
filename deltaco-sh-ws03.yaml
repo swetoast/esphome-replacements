@@ -1,0 +1,355 @@
+# Deltaco Smart Home SH-WS03 smoke alarm (TYWE3S + TuyaMCU, 2x AAA)
+#
+# The main controller powers the TYWE3S only when it has something to
+# report (alarm, test, battery). It speaks the Tuya Wi-Fi low-power
+# protocol, which the stock ESPHome "tuya:" component does not support,
+# so the protocol is handled in the interval lambda below.
+#
+# Wake sequence:
+#   module -> MCU  0x01 product info query
+#   module -> MCU  0x02 network status (03 router, 04 "cloud" = HA connected)
+#   MCU -> module  0x05 / 0x08 datapoint report, module acks
+#   module         clean API disconnect and deep sleep
+#   MCU            cuts power
+
+substitutions:
+  name: smoke-alarm-hallway
+  friendly_name: Smoke Alarm Hallway
+
+  # Static IP makes each wake faster. Pick a free address.
+  static_ip: 10.0.0.60
+  gateway: 10.0.0.1
+  subnet: 255.255.255.0
+  dns1: 10.0.0.5
+  dns2: 10.0.0.6
+
+  # Datapoints (Tuya smoke alarm standard). Confirm with tuya_sniff.py.
+  dp_smoke: "1"
+  smoke_alarm_value: "0"        # Tuya standard: 0 = alarm, 1 = normal
+  dp_fault: "11"                # 0 = no fault
+  dp_battery_state: "14"        # 0 low, 1 middle, 2 high
+  dp_battery_percent: "15"
+
+  # Report "connected" to the MCU after this long even if HA has not
+  # connected yet, so the MCU never force-powers-off without reporting.
+  api_wait_ms: "20000"
+
+  # Quiet time after the last report before the module disconnects from
+  # HA cleanly and sleeps. A clean disconnect keeps the entities available
+  # between wakes. Lower it if the log shows the power is cut first.
+  sleep_after_report_ms: "250"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp8266:
+  board: esp01_1m
+
+# UART0 belongs to the MCU. Logs go to UART1 (TX only, GPIO2, 115200).
+logger:
+  hardware_uart: UART1
+  baud_rate: 115200
+  level: DEBUG
+
+# Every wake can end with a hard power cut, so ESPHome would count each
+# one as a failed boot and drop into safe mode after a few wakes.
+safe_mode:
+  disabled: true
+
+api:
+  reboot_timeout: 0s
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+  reboot_timeout: 0s
+  manual_ip:
+    static_ip: ${static_ip}
+    gateway: ${gateway}
+    subnet: ${subnet}
+    dns1: ${dns1}
+    dns2: ${dns2}
+  ap:
+    ssid: ${name}-fallback
+    password: !secret ap_password
+
+captive_portal:
+
+# Marks the device as sleeping, so Home Assistant keeps the last state
+# between wakes after a clean disconnect. The lambda below calls it after
+# each delivered report. run_duration is only a fallback for bench use.
+deep_sleep:
+  id: sleeper
+  run_duration: 10min
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+uart:
+  id: mcu_uart
+  tx_pin: GPIO1
+  rx_pin: GPIO3
+  baud_rate: 9600
+
+binary_sensor:
+  - platform: template
+    id: smoke
+    name: Smoke
+    device_class: smoke
+
+  - platform: template
+    id: fault
+    name: Fault
+    device_class: problem
+
+  - platform: template
+    id: battery_low
+    name: Battery low
+    device_class: battery
+
+sensor:
+  - platform: template
+    id: battery_percent
+    name: Battery
+    unit_of_measurement: "%"
+    device_class: battery
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: never
+
+  - platform: wifi_signal
+    name: Wi-Fi signal
+    update_interval: 5s
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: template
+    id: battery_level
+    name: Battery level
+    update_interval: never
+
+  - platform: template
+    id: last_report
+    name: Last MCU report
+    entity_category: diagnostic
+    update_interval: never
+
+  - platform: template
+    id: mcu_product
+    name: MCU product info
+    entity_category: diagnostic
+    update_interval: never
+
+interval:
+  - interval: 20ms
+    then:
+      - lambda: |-
+          static std::vector<uint8_t> buf;
+          static bool query_answered = false;
+          static uint8_t query_tries = 0;
+          static uint32_t query_at = 0;
+          static uint8_t status_acked = 0xFF;
+          static uint8_t status_sent = 0xFF;
+          static uint8_t status_tries = 0;
+          static uint32_t status_at = 0;
+          static uint8_t ack_cmd = 0;
+          static uint32_t ack_due = 0;
+          static bool report_seen = false;
+          static bool stay_awake = false;
+          static bool sleeping = false;
+          static uint32_t last_activity = 0;
+          static uint32_t api_since = 0;
+
+          const uint32_t now = millis();
+          if (sleeping) return;
+
+          auto send = [](uint8_t cmd, const std::vector<uint8_t> &data) {
+            std::vector<uint8_t> f = {0x55, 0xAA, 0x00, cmd,
+                                      (uint8_t) (data.size() >> 8), (uint8_t) (data.size() & 0xFF)};
+            f.insert(f.end(), data.begin(), data.end());
+            uint8_t cs = 0;
+            for (uint8_t b : f) cs += b;
+            f.push_back(cs);
+            id(mcu_uart).write_array(f);
+            ESP_LOGD("mcu", "TX %s", format_hex_pretty(f).c_str());
+          };
+
+          auto parse_dps = [](const std::vector<uint8_t> &d, size_t i) {
+            std::string summary;
+            while (i + 4 <= d.size()) {
+              const uint8_t dp = d[i];
+              const uint8_t type = d[i + 1];
+              const uint16_t len = (d[i + 2] << 8) | d[i + 3];
+              if (i + 4 + len > d.size()) break;
+              uint32_t v = 0;
+              if (type == 0x01 || type == 0x02 || type == 0x04 || type == 0x05)
+                for (uint16_t k = 0; k < len && k < 4; k++) v = (v << 8) | d[i + 4 + k];
+
+              if (dp == ${dp_smoke}) {
+                id(smoke).publish_state(v == ${smoke_alarm_value});
+              } else if (dp == ${dp_fault}) {
+                id(fault).publish_state(v != 0);
+              } else if (dp == ${dp_battery_state}) {
+                id(battery_low).publish_state(v == 0);
+                id(battery_level).publish_state(v == 0 ? "low" : v == 1 ? "middle" : v == 2 ? "high" : std::to_string(v));
+              } else if (dp == ${dp_battery_percent}) {
+                id(battery_percent).publish_state(v);
+              }
+
+              char tmp[24];
+              snprintf(tmp, sizeof(tmp), "%sdp%u=%u/t%u", summary.empty() ? "" : " ",
+                       (unsigned) dp, (unsigned) v, (unsigned) type);
+              summary += tmp;
+              i += 4 + len;
+            }
+            if (!summary.empty()) {
+              ESP_LOGI("mcu", "Datapoints: %s", summary.c_str());
+              id(last_report).publish_state(summary);
+            }
+          };
+
+          const bool wifi_ok = wifi::global_wifi_component->is_connected();
+          const bool api_ok = api::global_api_server != nullptr && api::global_api_server->is_connected();
+          if (api_ok) {
+            if (api_since == 0) api_since = now == 0 ? 1 : now;
+          } else {
+            api_since = 0;
+          }
+
+          // Read and frame incoming bytes
+          while (id(mcu_uart).available()) {
+            uint8_t b;
+            if (!id(mcu_uart).read_byte(&b)) break;
+            buf.push_back(b);
+          }
+          if (buf.size() > 512) buf.clear();
+
+          while (true) {
+            while (!buf.empty() && buf[0] != 0x55) buf.erase(buf.begin());
+            if (buf.size() >= 2 && buf[1] != 0xAA) { buf.erase(buf.begin()); continue; }
+            if (buf.size() < 7) break;
+            const uint16_t len = (buf[4] << 8) | buf[5];
+            if (len > 255) { buf.erase(buf.begin()); continue; }
+            if (buf.size() < 7u + len) break;
+            uint8_t cs = 0;
+            for (size_t i = 0; i < 6u + len; i++) cs += buf[i];
+            if (cs != buf[6 + len]) {
+              ESP_LOGW("mcu", "Bad checksum, resyncing");
+              buf.erase(buf.begin());
+              continue;
+            }
+            const uint8_t cmd = buf[3];
+            std::vector<uint8_t> frame(buf.begin(), buf.begin() + 7 + len);
+            std::vector<uint8_t> data(buf.begin() + 6, buf.begin() + 6 + len);
+            buf.erase(buf.begin(), buf.begin() + 7 + len);
+            ESP_LOGD("mcu", "RX %s", format_hex_pretty(frame).c_str());
+            last_activity = now;
+
+            switch (cmd) {
+              case 0x01: {  // product info reply
+                query_answered = true;
+                std::string s(data.begin(), data.end());
+                ESP_LOGI("mcu", "Product: %s", s.c_str());
+                id(mcu_product).publish_state(s);
+                break;
+              }
+              case 0x02:    // network status acknowledged
+                status_acked = status_sent;
+                break;
+              case 0x03:    // reset Wi-Fi (button held for pairing)
+                ESP_LOGI("mcu", "MCU requested Wi-Fi reset, staying awake");
+                stay_awake = true;
+                send(0x03, {});
+                break;
+              case 0x04:    // reset and select pairing mode
+                ESP_LOGI("mcu", "MCU requested pairing mode %u, staying awake",
+                         (unsigned) (data.empty() ? 0 : data[0]));
+                stay_awake = true;
+                send(0x04, {});
+                break;
+              case 0x05:    // real-time datapoint report
+                parse_dps(data, 0);
+                report_seen = true;
+                ack_cmd = 0x05;
+                ack_due = now + 300;  // give the API time to push the state first
+                break;
+              case 0x08:    // record-type report: 7 byte time header, then datapoints
+                parse_dps(data, 7);
+                report_seen = true;
+                ack_cmd = 0x08;
+                ack_due = now + 300;
+                break;
+              case 0x06: {  // local time request
+                auto t = id(ha_time).now();
+                if (t.is_valid()) {
+                  const uint8_t wd = t.day_of_week == 1 ? 7 : t.day_of_week - 1;  // Monday = 1
+                  send(0x06, {0x01, (uint8_t) (t.year - 2000), t.month, t.day_of_month,
+                              t.hour, t.minute, t.second, wd});
+                } else {
+                  send(0x06, {0x00, 0, 0, 0, 0, 0, 0, 0});
+                }
+                break;
+              }
+              case 0x0B: {  // router signal strength
+                if (wifi_ok) {
+                  const int rssi = wifi::global_wifi_component->wifi_rssi();
+                  const int pct = std::min(100, std::max(0, 2 * (rssi + 100)));
+                  send(0x0B, {0x01, (uint8_t) pct});
+                } else {
+                  send(0x0B, {0x00, 0x00});
+                }
+                break;
+              }
+              default:
+                ESP_LOGW("mcu", "Unhandled command 0x%02X", cmd);
+                break;
+            }
+          }
+
+          // Delayed ack for datapoint reports
+          if (ack_cmd != 0 && (int32_t) (now - ack_due) >= 0) {
+            send(ack_cmd, {0x00});
+            ack_cmd = 0;
+            last_activity = now;
+          }
+
+          // Product info query, retried up to 3 times
+          if (!query_answered && query_tries < 3 && (query_tries == 0 || now - query_at > 1000)) {
+            send(0x01, {});
+            query_tries++;
+            query_at = now;
+          }
+
+          // Network status: 03 once Wi-Fi is up, 04 once HA is connected
+          uint8_t want = 0xFF;
+          if (wifi_ok) want = (api_ok || now > ${api_wait_ms}) ? 0x04 : 0x03;
+
+          if (want != 0xFF && want != status_acked) {
+            if (want != status_sent) {
+              status_sent = want;
+              status_tries = 0;
+            }
+            if (status_tries < 3 && (status_tries == 0 || now - status_at > 1000)) {
+              send(0x02, {want});
+              status_tries++;
+              status_at = now;
+            }
+          }
+
+          // Report delivered and HA connected: disconnect cleanly and sleep
+          if (report_seen && !stay_awake && ack_cmd == 0 && api_since != 0 &&
+              now - last_activity >= ${sleep_after_report_ms} &&
+              now - api_since >= ${sleep_after_report_ms}) {
+            ESP_LOGI("mcu", "Report delivered, sleeping until the next wake");
+            sleeping = true;
+            id(sleeper).begin_sleep(true);
+          }
