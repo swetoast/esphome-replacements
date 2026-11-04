@@ -48,17 +48,3 @@ One folder per device, named after brand and model. It needs:
 - a `secrets.example.yaml` with placeholder values
 
 Add board photos when the device has to be opened, a `tests/` folder when the config has its own logic, and a `hardware/` folder for printed or built parts. Then run `reuse lint`.
-
-## License
-
-The point of this project is that nobody gets to lock these devices up again, so everything here is copyleft.
-
-- Configs, Home Assistant packages, scripts and tests: [GPL-3.0-or-later](LICENSES/GPL-3.0-or-later.txt). The firmware they build contains the ESPHome C++ runtime, which is GPLv3, so the configs use the same terms.
-- Documentation and images: [CC BY-SA 4.0](LICENSES/CC-BY-SA-4.0.txt).
-- Hardware designs such as printed cases: CERN-OHL-S-2.0. Its text goes into `LICENSES/` with the first design.
-
-Use it, change it, sell things built with it. Keep the credit, and share your changed versions under the same license. `REUSE.toml` records which license covers which file.
-
-ESPHome is MIT (Python) and GPLv3 (C++ runtime). Device names and trademarks belong to their owners.
-
-Copyright 2026 swetoast.
