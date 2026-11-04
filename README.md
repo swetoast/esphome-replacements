@@ -1,111 +1,64 @@
 # ESPHome replacements
 
-Replacement firmware for off-the-shelf smart home devices. Each device here runs ESPHome instead of its stock firmware and talks only to Home Assistant on the local network. No cloud account, no outside connections.
+Smart home devices are sold to you but controlled by someone else. They need a vendor account, talk to servers you don't control, report on how you use them, and die the day the company loses interest, gets bought or shuts the servers down.
 
-Every device has its own folder with everything needed to go from a stock unit to a working ESPHome device: hardware notes, backup and flashing steps, the ESPHome config and the Home Assistant side.
+This project takes that cloud junk and replaces its firmware with ESPHome. The device stays on your network, answers only to your Home Assistant, and keeps working whether the company behind it exists or not. Same hardware, no strings attached.
 
-## Devices
+You bought it. You should own it.
 
-| Device | What it is | Chip | First flash | State |
-|---|---|---|---|---|
-| [Deltaco SH-WS03](Deltaco%20SH-WS03/) | Wi-Fi smoke alarm, battery powered | Tuya TYWE3S (ESP8266) | Serial adapter, soldering required | Config validated and protocol tests passing; not yet flashed on a device |
-| [Walltrix Emil](Walltrix%20Emil/) | Wall clock with a 36-LED ring | ESP8266EX, 4 MB | Micro-USB, no opening needed | Five ready-made clock examples |
+## How
 
-## Before you start
+Every device here is handled the same way.
 
-These points apply to every device. Each device README has the specific steps.
+**Nothing leaves your network.** No cloud, no account, no telemetry. Pull the internet cable and the device doesn't notice.
 
-1. **Back up the stock firmware first.** Read the whole flash before writing anything. Without a backup there is no way back.
-2. **Keep backups private.** A stock firmware dump contains your Wi-Fi password and the device's own keys. Never upload one, here or anywhere else. `.gitignore` already blocks `*.bin`.
-3. **Disconnect power.** Unplug mains devices and remove batteries before opening or wiring them. Only connect what the device README tells you to.
-4. **Use 3.3 V.** ESP8266 and ESP32 modules are not 5 V tolerant. Set the serial adapter to 3.3 V and never connect its 5 V pin.
-5. **Check the pinout with a multimeter** before soldering. Modules with the same name sometimes ship with a different internal layout.
+**It still does its job.** A clock keeps time, a smoke alarm still screams. Safety functions stay on the device's own hardware. The new firmware adds reporting, it doesn't take over.
 
-### Tools
+**Home Assistant does the thinking.** The firmware reads sensors, drives outputs and reports state. Schedules, logic and anything you might change later live in Home Assistant, so you never have to reflash to tweak behaviour.
 
-| Tool | Used for |
-|---|---|
-| USB to serial adapter, 3.3 V (CP2102, CH340) | First flash on devices without USB |
-| Soldering iron, thin wire | Devices without a header |
-| Multimeter | Checking pinouts and supply voltages |
-| Python 3 | `pip install --upgrade esptool esphome pyserial` |
+**You can always go back.** Every guide starts with a full backup of the stock firmware and ends with how to restore it.
 
-The device READMEs use esptool 5 command names (`read-flash`, `write-flash`, `erase-flash`).
+**No guessing.** Board photos, pinouts, exact commands, what every entity means and what to do when it goes wrong. If someone has to guess a step, the guide isn't done.
 
-### Secrets
+**No pretending.** Configs are validated, testable logic is tested, and every device README says plainly what has and hasn't been confirmed on real hardware.
 
-Each device folder includes a `secrets.example.yaml`. Copy it to `secrets.yaml` next to the config and fill it in. `secrets.yaml` is ignored by git and never committed.
+## Finding the next one
 
-Generate an API encryption key with:
+The easy wins run on an ESP8266 or ESP32, often inside a Tuya module like the TYWE3S or TYWE2S. Newer Tuya modules often use BK7231 or RTL8710 chips instead, which ESPHome supports only partly or not at all. Check the FCC photos or open one up before buying a batch.
 
-```bash
-python3 -c "import secrets,base64;print(base64.b64encode(secrets.token_bytes(32)).decode())"
-```
+Mains-powered devices are the simplest. Battery devices are harder: a separate controller keeps the Wi-Fi module off and powers it only for a few seconds to report, so the firmware has to speak that controller's language fast.
 
-## Repository layout
+## Don't brick it, don't burn it
 
-```
-.
-├── README.md
-├── LICENSE                     GPL-3.0 (configs, scripts, tests)
-├── LICENSES/                   Full texts of every license used
-├── REUSE.toml                  Which license applies to which file
-├── Deltaco SH-WS03/
-│   ├── README.md               Hardware, pinout, backup, flashing, entities
-│   ├── deltaco-sh-ws03.yaml
-│   ├── secrets.example.yaml
-│   ├── tuya_sniff.py
-│   ├── sh-ws03-wiring.png
-│   └── tests/
-└── Walltrix Emil/
-    ├── README.md
-    ├── docs/
-    ├── examples/
-    └── tests/
-```
+- Back up the whole flash before writing anything. It's your only way back.
+- Never publish a backup. It holds your Wi-Fi password and the device's keys. `.gitignore` blocks `*.bin` for that reason.
+- Unplug mains devices and pull the batteries before opening or wiring anything.
+- ESP chips run at 3.3 V. Set the serial adapter to 3.3 V and leave its 5 V pin alone.
+- Check the pinout with a multimeter before soldering. Modules with the same name don't always have the same insides.
+- New firmware voids the warranty and can void certifications. Test the device after flashing, and keep testing it the way its manual says.
+
+Most devices need a 3.3 V USB serial adapter, a soldering iron, a multimeter and `pip install --upgrade esptool esphome pyserial`.
 
 ## Adding a device
 
-Create a folder named after the brand and model, and include:
+One folder per device, named after brand and model. It needs:
 
-| Item | Required | Contents |
-|---|---|---|
-| `README.md` | Yes | What the device is, the hardware (chip, module, pinout), backup steps, flashing steps, Home Assistant entities, troubleshooting, restore steps |
-| ESPHome config | Yes | One `.yaml` per variant, or an `examples/` folder for several |
-| `secrets.example.yaml` | Yes | Placeholder values only |
-| Photos or wiring images | When opening is needed | Board photos with the connection points marked |
-| `tests/` | When the config has logic | Anything that can be checked without the device |
-| `hardware/` | For printed or built parts | Source files (`.scad`, `.step`, `.f3d`) and printable files (`.stl`, `.3mf`) |
+- a README covering hardware, backup, flashing, entities, troubleshooting and restore
+- the ESPHome config
+- a `secrets.example.yaml` with placeholder values
 
-Then add a row to the device table above, and run `reuse lint` (see Licensing).
+Add board photos when the device has to be opened, a `tests/` folder when the config has its own logic, and a `hardware/` folder for printed or built parts. Then run `reuse lint`.
 
-## Safety
+## License
 
-Some of these devices have a safety function, for example a smoke alarm. Where that is the case, only the Wi-Fi part is replaced and the safety function keeps running on the device's own hardware. Test the device after flashing and after reassembly, and keep testing it as its manual says.
+The point of this project is that nobody gets to lock these devices up again, so everything here is copyleft.
 
-Replacing the firmware voids the warranty and may void certifications. These projects add local control and notifications. They are not a replacement for a certified alarm or safety system.
+- Configs, Home Assistant packages, scripts and tests: [GPL-3.0-or-later](LICENSES/GPL-3.0-or-later.txt). The firmware they build contains the ESPHome C++ runtime, which is GPLv3, so the configs use the same terms.
+- Documentation and images: [CC BY-SA 4.0](LICENSES/CC-BY-SA-4.0.txt).
+- Hardware designs such as printed cases: CERN-OHL-S-2.0. Its text goes into `LICENSES/` with the first design.
 
-Everything here is provided without warranty; see the license texts.
+Use it, change it, sell things built with it. Keep the credit, and share your changed versions under the same license. `REUSE.toml` records which license covers which file.
 
-## Licensing
-
-The repository uses one license per kind of content. [REUSE](https://reuse.software/) metadata in `REUSE.toml` records which license applies to which file, and the full texts are in `LICENSES/`.
-
-| Content | License | Why |
-|---|---|---|
-| ESPHome configs, Home Assistant packages, scripts, tests | [GPL-3.0-or-later](LICENSES/GPL-3.0-or-later.txt) | The firmware built from these configs contains the ESPHome C++ runtime, which is GPLv3. The configs follow the same terms, so improvements to them stay open. |
-| Documentation and images | [CC BY-SA 4.0](LICENSES/CC-BY-SA-4.0.txt) | Made for text and pictures. Guides can be copied and translated with credit, and changed versions stay under the same terms. |
-| Hardware designs (cases, mounts, PCBs) | CERN-OHL-S-2.0 | Made for physical designs. Modified designs that are distributed or sold must share their sources. The license text is added to `LICENSES/` with the first hardware file. |
-
-In short: use, change and share anything here, including commercially. Keep the credit, and when you share a changed version, share it under the same license.
-
-ESPHome itself is licensed under MIT (Python) and GPLv3 (C++ runtime). Device names and trademarks belong to their owners.
-
-To check the licensing after adding files:
-
-```bash
-pip install reuse
-reuse lint
-```
+ESPHome is MIT (Python) and GPLv3 (C++ runtime). Device names and trademarks belong to their owners.
 
 Copyright 2026 swetoast.
