@@ -10,13 +10,13 @@ You bought it. You should own it.
 
 Every device here is handled the same way.
 
-**Nothing leaves your network.** No cloud, no account, no telemetry. Pull the internet cable and the device doesn't notice.
+**Nothing leaves your network.** No cloud, no account, no telemetry.
 
-**It still does its job.** A clock keeps time, a smoke alarm still screams. Safety functions stay on the device's own hardware. The new firmware adds reporting, it doesn't take over.
+**It still does its job.** It keeps working on its own. Safety functions stay on the device's own hardware. The new firmware adds reporting, it doesn't take over.
 
-**Home Assistant does the thinking.** The firmware reads sensors, drives outputs and reports state. Schedules, logic and anything you might change later live in Home Assistant, so you never have to reflash to tweak behaviour.
+**Home Assistant does the thinking.** The firmware reports state and does what it's told. Logic and anything you might change later live in Home Assistant, so you never have to reflash to tweak behaviour.
 
-**You can always go back.** Every guide starts with a full backup of the stock firmware and ends with how to restore it.
+**You can always go back.** Every guide starts with a backup of the stock firmware and ends with how to restore it.
 
 **No guessing.** Every step is written out. If someone has to guess, the guide isn't done.
 
@@ -24,26 +24,24 @@ Every device here is handled the same way.
 
 ## Finding the next one
 
-Look for devices with a chip ESPHome can run on, or a module that can be swapped for one that can. Check what's inside before buying a batch, since the same product can ship with different insides.
-
-Mains-powered devices are the simplest. Battery devices are harder, because they only wake the radio briefly to report.
+Pick devices that can run ESPHome or can be made to. Check what's inside before buying, since the same product can ship with different insides.
 
 ## Don't brick it, don't burn it
 
-- Back up the whole flash before writing anything. It's your only way back.
-- Never publish a backup. It holds your network credentials and the device's keys.
-- Unplug mains devices and pull the batteries before opening or wiring anything.
-- Check the voltage and pinout before connecting anything. Devices with the same name don't always have the same insides.
+- Back up the stock firmware before writing anything. It's your only way back.
+- Never publish a backup. It holds your credentials and the device's keys.
+- Disconnect all power before opening or wiring anything.
+- Check before you connect. Devices with the same name don't always have the same insides.
 - New firmware voids the warranty and can void certifications. Test the device after flashing, and keep testing it the way its manual says.
 
-Each device README lists the tools it needs.
+Each device README lists what it needs.
 
 ## Adding a device
 
-One folder per device, named after brand and model. It needs:
+One folder per device, named after brand and model, with:
 
 - a README covering hardware, backup, flashing, entities, troubleshooting and restore
 - the ESPHome config
-- an example secrets file with placeholder values, if the config uses secrets
+- example secrets with placeholder values, if the config uses secrets
 
-Add board photos when the device has to be opened, tests when the config has its own logic, and any printed or built parts. Then run `reuse lint`.
+Include anything else the device needs to be reproduced.
