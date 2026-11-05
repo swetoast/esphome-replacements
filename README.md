@@ -2,7 +2,7 @@
 
 Smart home devices are sold to you but controlled by someone else. They need a vendor account, talk to servers you don't control, report on how you use them, and die the day the company loses interest, gets bought or shuts the servers down.
 
-This project takes that cloud junk and puts ESPHome on it. The device stays on your network, answers only to your Home Assistant, and keeps working whether the company behind it exists or not.
+This project takes that takes back control for smart devices and puts ESPHome on it. The device stays on your network, answers only to your Home Assistant, and keeps working whether the company behind it exists or not.
 
 You bought it. You should own it.
 
