@@ -1,0 +1,129 @@
+# Nedis ZBSC10WT climate sensor, rebuilt on a Seeed XIAO nRF52840
+#
+# The stock Tuya ZT5 Zigbee module is removed and replaced with a XIAO
+# nRF52840 running ESPHome as a sleepy Zigbee end device. The original
+# humidity sensor, button, LED and CR2450 holder stay in place.
+#
+# Wiring (XIAO pin = nRF52 pin):
+#   D4 = P0.04  I2C SDA  -> sensor flex SDA
+#   D5 = P0.05  I2C SCL  -> sensor flex SCL
+#   D2 = P0.28  button   -> S1 (other side of S1 to GND)
+#   D1 = P0.03  LED      -> D1 anode side (through the board's resistor)
+#   3V3         power    -> CR2450 +
+#   GND         ground   -> CR2450 -
+
+substitutions:
+  name: climate-bedroom
+  friendly_name: Climate Bedroom
+
+  # Humidity sensor on the flex. Find it with the I2C scan in the log:
+  #   0x44 or 0x45  sht3xd (also try sht4x if readings fail)
+  #   0x70          shtcx
+  #   0x38          aht10
+  #   0x40          hdc1080
+  sensor_platform: sht3xd
+  sensor_address: "0x44"
+
+  # How often to wake, measure and report
+  report_interval: 5min
+
+  # Logging over USB. Use DEBUG and 115200 on the bench. Set log_baud_rate
+  # to "0" for the battery build: that keeps the USB stack powered off.
+  log_level: DEBUG
+  log_baud_rate: "115200"
+
+  # Battery: CR2450 is about 3.0 V full, the device stops around 2.2 V
+  battery_full: "3.0"
+  battery_empty: "2.2"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    priority: -100
+    then:
+      # Hold the button while inserting the battery to leave the current
+      # Zigbee network and pair again.
+      - if:
+          condition:
+            binary_sensor.is_on: pair_button
+          then:
+            - logger.log: "Button held at boot, leaving Zigbee network"
+            - zigbee.factory_reset:
+
+nrf52:
+  board: xiao_ble
+
+logger:
+  level: ${log_level}
+  baud_rate: ${log_baud_rate}
+
+zigbee:
+  power_source: BATTERY
+  sleepy: true
+  on_join:
+    then:
+      - output.turn_on: status_led
+      - delay: 1s
+      - output.turn_off: status_led
+
+# Measure and report, then sleep until the next interval. The Zigbee stack
+# wakes the CPU if it needs to.
+deep_sleep:
+  run_duration: 10s
+  sleep_duration: ${report_interval}
+
+i2c:
+  sda: P0.04
+  scl: P0.05
+  scan: true
+
+sensor:
+  - platform: ${sensor_platform}
+    address: ${sensor_address}
+    update_interval: ${report_interval}
+    temperature:
+      name: Temperature
+      accuracy_decimals: 1
+    humidity:
+      name: Humidity
+      accuracy_decimals: 0
+
+  # The XIAO runs straight off the coin cell, so VDD is the battery voltage
+  - platform: adc
+    id: battery_voltage
+    pin: VDD
+    name: Voltage
+    update_interval: ${report_interval}
+    accuracy_decimals: 2
+    on_value:
+      then:
+        - component.update: battery_level
+
+  - platform: template
+    id: battery_level
+    name: Battery
+    unit_of_measurement: "%"
+    device_class: battery
+    accuracy_decimals: 0
+    update_interval: never
+    lambda: |-
+      const float v = id(battery_voltage).state;
+      const float pct = (v - ${battery_empty}) / (${battery_full} - ${battery_empty}) * 100.0f;
+      return std::max(0.0f, std::min(100.0f, pct));
+
+binary_sensor:
+  - platform: gpio
+    id: pair_button
+    internal: true
+    pin:
+      number: P0.28
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+
+output:
+  - platform: gpio
+    id: status_led
+    pin: P0.03
