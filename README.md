@@ -2,7 +2,7 @@
 
 Smart home devices are sold to you but controlled by someone else. They need a vendor account, talk to servers you don't control, report on how you use them, and die the day the company loses interest, gets bought or shuts the servers down.
 
-This project takes that takes back control for smart devices and puts ESPHome on it. The device stays on your network, answers only to your Home Assistant, and keeps working whether the company behind it exists or not.
+This project takes back control of smart devices and puts ESPHome on them. The device stays on your network, answers only to your Home Assistant, and keeps working whether the company behind it exists or not.
 
 You bought it. You should own it.
 
@@ -45,3 +45,14 @@ One folder per device, named after brand and model, with:
 - example secrets with placeholder values, if the config uses secrets
 
 Include anything else the device needs to be reproduced.
+
+## Contributing
+
+Pull requests are welcome. If you're not sure a device fits, open an issue first.
+
+- Keep each pull request to one device or one change.
+- Follow the layout in Adding a device.
+- Say what you tested on real hardware and what you didn't.
+- Never include backups, real credentials or keys.
+
+Report bugs in issues. Say which device, what you expected and what happened.
