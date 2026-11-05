@@ -2,7 +2,7 @@
 
 Smart home devices are sold to you but controlled by someone else. They need a vendor account, talk to servers you don't control, report on how you use them, and die the day the company loses interest, gets bought or shuts the servers down.
 
-This project takes that cloud junk and replaces its firmware with ESPHome. The device stays on your network, answers only to your Home Assistant, and keeps working whether the company behind it exists or not. Same hardware, no strings attached.
+This project takes that cloud junk and puts ESPHome on it. Usually that means flashing the chip that's already inside. When that chip can't run ESPHome, the cloud module comes out and one that can goes in. Either way the device stays on your network, answers only to your Home Assistant, and keeps working whether the company behind it exists or not. Same case, same sensors, no strings attached.
 
 You bought it. You should own it.
 
@@ -26,12 +26,14 @@ Every device here is handled the same way.
 
 The easy wins run on an ESP8266 or ESP32, often inside a Tuya module like the TYWE3S or TYWE2S. Newer Tuya modules often use BK7231 or RTL8710 chips instead, which ESPHome supports only partly or not at all. Check the FCC photos or open one up before buying a batch.
 
+When the module can't run ESPHome, swap it. A pin-compatible ESP32 or nRF52840 board can take its place and keep using the device's own sensors, buttons and battery. Zigbee devices stay Zigbee this way and pair with your own coordinator.
+
 Mains-powered devices are the simplest. Battery devices are harder: a separate controller keeps the Wi-Fi module off and powers it only for a few seconds to report, so the firmware has to speak that controller's language fast.
 
 ## Don't brick it, don't burn it
 
 - Back up the whole flash before writing anything. It's your only way back.
-- Never publish a backup. It holds your Wi-Fi password and the device's keys. `.gitignore` blocks `*.bin` for that reason.
+- Never publish a backup. It holds your Wi-Fi password and the device's keys.
 - Unplug mains devices and pull the batteries before opening or wiring anything.
 - ESP chips run at 3.3 V. Set the serial adapter to 3.3 V and leave its 5 V pin alone.
 - Check the pinout with a multimeter before soldering. Modules with the same name don't always have the same insides.
@@ -45,6 +47,6 @@ One folder per device, named after brand and model. It needs:
 
 - a README covering hardware, backup, flashing, entities, troubleshooting and restore
 - the ESPHome config
-- a `secrets.example.yaml` with placeholder values
+- a `secrets.example.yaml` with placeholder values, if the device uses Wi-Fi
 
 Add board photos when the device has to be opened, a `tests/` folder when the config has its own logic, and a `hardware/` folder for printed or built parts. Then run `reuse lint`.
